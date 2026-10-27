@@ -2,3 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+raw_data/
+.Rproj.user/
+.Rhistory
+rsconnect/
