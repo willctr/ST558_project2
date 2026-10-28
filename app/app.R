@@ -179,7 +179,7 @@ server <- function(input, output, session) {
     df
   }, ignoreNULL = FALSE)
   
-  # Data download tab
+  # data download tab
   # number of plays in the current subset
   output$n_rows <- renderText({
     paste(format(nrow(subset_data()), big.mark = ","), "plays selected")
