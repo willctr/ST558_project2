@@ -124,8 +124,16 @@ ui <- fluidPage(
           img(src = "nfl_logo.png", width = "100%",
               style = "max-width: 600px; margin-top: 10px;")
         ),
-        tabPanel("Data Download",
-                 textOutput("n_rows")),
+        # Data download tab
+        tabPanel(
+          "Data Download",
+          br(),
+          textOutput("n_rows"),
+          br(),
+          downloadButton("download_data", "Download filtered data (CSV)"),
+          br(), br(),
+          DT::dataTableOutput("data_table")
+        ),
         tabPanel("Data Exploration",
                  p("Data Exploration tab."))
       )
@@ -170,6 +178,28 @@ server <- function(input, output, session) {
     
     df
   }, ignoreNULL = FALSE)
+  
+  # Data download tab
+  # number of plays in the current subset
+  output$n_rows <- renderText({
+    paste(format(nrow(subset_data()), big.mark = ","), "plays selected")
+  })
+  
+  # table of the subset data
+  output$data_table <- DT::renderDataTable({
+    DT::datatable(subset_data(),
+                  options = list(pageLength = 10, scrollX = TRUE))
+  })
+  
+  # save the subset as a csv
+  output$download_data <- downloadHandler(
+    filename = function() {
+      paste0("nfl_pbp_subset_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      write.csv(subset_data(), file, row.names = FALSE)
+    }
+  )
   
 }
 
