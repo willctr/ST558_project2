@@ -30,6 +30,36 @@ make_range_slider <- function(id, var) {
               value = c(floor(rng[1]), ceiling(rng[2])))
 }
 
+# categorical variables for tables, bar charts, coloring, and grouping
+cat_vars <- c(
+  "Play type" = "play_type",
+  "Down" = "down",
+  "Quarter" = "quarter",
+  "Season" = "season",
+  "Field zone" = "field_zone",
+  "Game situation (score)" = "game_situation",
+  "Conference (offense)" = "conference",
+  "Division (offense)" = "division",
+  "Pass length" = "pass_length",
+  "Pass location" = "pass_location",
+  "Pass outcome" = "pass_outcome",
+  "Run location" = "run_location",
+  "First down gained" = "first_down",
+  "Touchdown" = "touchdown",
+  "Interception" = "interception",
+  "Fumble" = "fumble",
+  "Offense team" = "posteam"
+)
+
+# variables with few enough levels to facet by (no team, 32 levels)
+facet_vars <- cat_vars[cat_vars != "posteam"]
+
+# readable label for any variable name
+var_label <- function(var) {
+  all_vars <- c(numeric_vars, cat_vars)
+  names(all_vars)[all_vars == var][1]
+}
+
 # UI
 ui <- fluidPage(
   titlePanel("NFL Play-by-Play Explorer (2009-2016)"),
@@ -124,7 +154,7 @@ ui <- fluidPage(
           img(src = "nfl_logo.png", width = "100%",
               style = "max-width: 600px; margin-top: 10px;")
         ),
-        # Data download tab
+        # data download tab
         tabPanel(
           "Data Download",
           br(),
@@ -134,8 +164,51 @@ ui <- fluidPage(
           br(), br(),
           DT::dataTableOutput("data_table")
         ),
-        tabPanel("Data Exploration",
-                 p("Data Exploration tab."))
+        
+        # data exploration tab
+        tabPanel(
+          "Data Exploration",
+          br(),
+          radioButtons(
+            "summary_type", "Type of summary",
+            choices = c("Categorical", "Numeric"),
+            selected = "Categorical",
+            inline = TRUE
+          ),
+          
+          # categorical summaries
+          conditionalPanel(
+            condition = "input.summary_type == 'Categorical'",
+            fluidRow(
+              column(4, selectInput("cat_var1", "Variable",
+                                    choices = cat_vars, selected = "play_type")),
+              column(4, selectInput("cat_var2", "Second variable (optional)",
+                                    choices = c("None" = "none", cat_vars),
+                                    selected = "down")),
+              column(4, selectInput("cat_facet", "Facet by (optional)",
+                                    choices = c("None" = "none", facet_vars),
+                                    selected = "none"))
+            ),
+            radioButtons(
+              "bar_position", "Bar style (when a second variable is chosen)",
+              choices = c("Side-by-side" = "dodge",
+                          "Stacked" = "stack",
+                          "Proportions" = "fill"),
+              selected = "dodge",
+              inline = TRUE
+            ),
+            h4("Contingency table"),
+            tableOutput("cat_table"),
+            h4("Bar chart"),
+            plotOutput("cat_plot", height = "450px")
+          ),
+          
+          # numeric summaries
+          conditionalPanel(
+            condition = "input.summary_type == 'Numeric'",
+            p("Numeric summaries - coming soon.")
+          )
+        )
       )
     )
   )
@@ -200,6 +273,76 @@ server <- function(input, output, session) {
       write.csv(subset_data(), file, row.names = FALSE)
     }
   )
+  
+  # data exploration tab: categorical
+  # subset data with missing values removed for the chosen variables
+  cat_data <- reactive({
+    vars <- c(input$cat_var1, input$cat_var2, input$cat_facet)
+    vars <- vars[vars != "none"]
+    subset_data() |>
+      filter(if_all(all_of(vars), ~ !is.na(.x))) |>
+      droplevels()
+  })
+  
+  # checks shared by the table and the plot
+  check_cat_inputs <- function() {
+    validate(
+      need(input$cat_var1 != input$cat_var2,
+           "Choose two different variables."),
+      need(input$cat_facet == "none" ||
+             !(input$cat_facet %in% c(input$cat_var1, input$cat_var2)),
+           "The facet variable must be different from the plotted variables."),
+      need(nrow(cat_data()) > 0,
+           "No plays match these filters. Change the sidebar or variables.")
+    )
+  }
+  
+  output$cat_table <- renderTable({
+    check_cat_inputs()
+    df <- cat_data()
+    
+    if (input$cat_var2 == "none") {
+      # one-way table with proportions
+      df |>
+        count(.data[[input$cat_var1]], name = "Count") |>
+        mutate(Proportion = round(Count / sum(Count), 3)) |>
+        rename(!!var_label(input$cat_var1) := 1)
+    } else {
+      # two-way table: rows = variable 1, columns = variable 2
+      tab <- as.data.frame.matrix(table(df[[input$cat_var1]], df[[input$cat_var2]]))
+      row_name <- paste(var_label(input$cat_var1), "/", var_label(input$cat_var2))
+      cbind(setNames(data.frame(rownames(tab)), row_name), tab)
+    }
+  }, digits = 3)
+  
+  output$cat_plot <- renderPlot({
+    check_cat_inputs()
+    df <- cat_data()
+    
+    if (input$cat_var2 == "none") {
+      p <- ggplot(df, aes(x = .data[[input$cat_var1]])) +
+        geom_bar(fill = "#2c7fb8") +
+        labs(title = paste("Number of plays by", var_label(input$cat_var1)),
+             x = var_label(input$cat_var1), y = "Number of plays")
+    } else {
+      y_label <- if (input$bar_position == "fill") "Proportion of plays" else "Number of plays"
+      p <- ggplot(df, aes(x = .data[[input$cat_var1]],
+                          fill = .data[[input$cat_var2]])) +
+        geom_bar(position = input$bar_position) +
+        labs(title = paste(var_label(input$cat_var1), "by",
+                           var_label(input$cat_var2)),
+             x = var_label(input$cat_var1), y = y_label,
+             fill = var_label(input$cat_var2))
+    }
+    
+    if (input$cat_facet != "none") {
+      p <- p + facet_wrap(vars(.data[[input$cat_facet]])) +
+        labs(subtitle = paste("Faceted by", var_label(input$cat_facet)))
+    }
+    
+    p + theme_minimal(base_size = 14) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
   
 }
 
