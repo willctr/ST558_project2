@@ -1,0 +1,143 @@
+# app.R
+# NFL play-by-play
+# shiny app for subsetting, summarizing, and plotting NFL play-by-play data.
+
+library(shiny)
+library(dplyr)
+library(ggplot2)
+
+# data
+nfl <- readRDS("nfl_pbp.rds")
+
+# numeric variables the user can filter on
+numeric_vars <- c(
+  "Yards gained" = "yards_gained",
+  "Yards to go" = "ydstogo",
+  "Yards from opponent's end zone" = "yrdline100",
+  "Score differential" = "score_diff",
+  "Seconds left in regulation" = "time_secs",
+  "Air yards (passes only)" = "air_yards",
+  "Expected points added (EPA)" = "epa",
+  "Win probability" = "win_prob"
+)
+
+#  build a range slider for a numeric variable
+make_range_slider <- function(id, var) {
+  rng <- range(nfl[[var]], na.rm = TRUE)
+  label <- names(numeric_vars)[numeric_vars == var]
+  sliderInput(id, label = paste("Range of", label),
+              min = floor(rng[1]), max = ceiling(rng[2]),
+              value = c(floor(rng[1]), ceiling(rng[2])))
+}
+
+# UI
+ui <- fluidPage(
+  titlePanel("NFL Play-by-Play Explorer (2009-2016)"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      h4("Subset the data"),
+      
+      # categorical filter: play type
+      checkboxGroupInput(
+        "play_type", "Play type",
+        choices = levels(nfl$play_type),
+        selected = levels(nfl$play_type)
+      ),
+      
+      # categorical filter: down
+      radioButtons(
+        "down", "Down",
+        choices = c("All", levels(nfl$down)),
+        selected = "All",
+        inline = TRUE
+      ),
+      
+      # categorical filter: conference of the offense
+      radioButtons(
+        "conference", "Offense's conference",
+        choices = c("All", levels(nfl$conference)),
+        selected = "All",
+        inline = TRUE
+      ),
+      
+      hr(),
+      
+      # numeric filter: choose a variable, then a slider appears
+      selectInput(
+        "num_var1", "Numeric variable 1",
+        choices = c("None" = "none", numeric_vars),
+        selected = "none"
+      ),
+      uiOutput("num_slider1"),
+      
+      # numeric filter 
+      selectInput(
+        "num_var2", "Numeric variable 2",
+        choices = c("None" = "none", numeric_vars),
+        selected = "none"
+      ),
+      uiOutput("num_slider2"),
+      
+      helpText("Filtering on a numeric variable drops plays where it is missing",
+               "(for example, air yards on runs)."),
+      
+      actionButton("apply", "Apply filters", class = "btn-primary")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        id = "tabs",
+        selected = "About",
+        tabPanel("About",
+                 p("About tab.")),
+        tabPanel("Data Download",
+                 textOutput("n_rows")),
+        tabPanel("Data Exploration",
+                 p("Data Exploration tab."))
+      )
+    )
+  )
+)
+
+# server
+server <- function(input, output, session) {
+  
+  # dynamic sliders: only shown once a numeric variable is chosen
+  output$num_slider1 <- renderUI({
+    req(input$num_var1 != "none")
+    make_range_slider("num_range1", input$num_var1)
+  })
+  
+  output$num_slider2 <- renderUI({
+    req(input$num_var2 != "none")
+    make_range_slider("num_range2", input$num_var2)
+  })
+  
+  # subset data: only updates when the Apply button is pressed
+  subset_data <- eventReactive(input$apply, {
+    df <- nfl |>
+      filter(play_type %in% input$play_type)
+    
+    if (input$down != "All") {
+      df <- filter(df, down == input$down)
+    }
+    if (input$conference != "All") {
+      df <- filter(df, conference == input$conference)
+    }
+    
+    if (input$num_var1 != "none" && !is.null(input$num_range1)) {
+      df <- filter(df, between(.data[[input$num_var1]],
+                               input$num_range1[1], input$num_range1[2]))
+    }
+    if (input$num_var2 != "none" && !is.null(input$num_range2)) {
+      df <- filter(df, between(.data[[input$num_var2]],
+                               input$num_range2[1], input$num_range2[2]))
+    }
+    
+    df
+  }, ignoreNULL = FALSE)
+  
+}
+
+shinyApp(ui, server)
