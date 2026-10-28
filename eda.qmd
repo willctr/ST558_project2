@@ -1,0 +1,248 @@
+---
+title: "NFL Play-by-Play (2009-2016): Static Exploration"
+author: "Will Carter"
+---
+
+## Purpose
+
+This file explores the cleaned NFL play-by-play data before building the Shiny app.
+The tables and plots will be accessed on the app's data exploration tab.
+
+The data covers every pass, run, and sack from the 2009-2016 regular and postseasons. 
+The dataset is sourced from [Kaggle](https://www.kaggle.com/datasets/maxhorowitz/nflplaybyplay2009to2016).
+`data_process.R` cleans it and saves it to `app/nfl_pbp.rds`.
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+
+nfl <- readRDS("app/nfl_pbp.rds")
+glimpse(nfl)
+```
+
+## contingency tables
+
+### one-way tables
+
+How often teams pass, run, or get sacked:
+
+```{r one-way-play-type}
+table(nfl$play_type)
+```
+
+Where plays start on the field:
+
+```{r one-way-field-zone}
+table(nfl$field_zone)
+```
+
+### two-way tables
+
+Play type by down. Teams run most on 1st down and they pass most on 3rd down.
+
+```{r two-way-down}
+table(nfl$down, nfl$play_type)
+```
+
+The same table as proportions:
+
+```{r two-way-down-prop}
+round(prop.table(table(nfl$down, nfl$play_type), margin = 1), 3)
+```
+
+Pass length by pass location. Most passes are short, and fewer go over the middle:
+
+```{r two-way-pass}
+table(nfl$pass_length, nfl$pass_location)
+```
+
+## numeric summaries by group
+
+Yards gained and EPA by down and play type:
+
+```{r summary-down-type}
+nfl |>
+  group_by(down, play_type) |>
+  summarize(
+    n            = n(),
+    mean_yards   = mean(yards_gained),
+    median_yards = median(yards_gained),
+    sd_yards     = sd(yards_gained),
+    mean_epa     = mean(epa, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Air yards on passes by pass length and outcome:
+
+```{r summary-air-yards}
+nfl |>
+  filter(play_type == "Pass", !is.na(pass_length)) |>
+  group_by(pass_length, pass_outcome) |>
+  summarize(
+    n                = n(),
+    mean_air_yards   = mean(air_yards, na.rm = TRUE),
+    median_air_yards = median(air_yards, na.rm = TRUE),
+    sd_air_yards     = sd(air_yards, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+Win probability by game situation:
+
+```{r summary-win-prob}
+nfl |>
+  group_by(game_situation) |>
+  summarize(
+    n         = n(),
+    mean_wp   = mean(win_prob, na.rm = TRUE),
+    median_wp = median(win_prob, na.rm = TRUE),
+    sd_wp     = sd(win_prob, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## plots
+
+### play type by down
+
+```{r plot-bar-down}
+ggplot(nfl, aes(x = down, fill = play_type)) +
+  geom_bar(position = "dodge") +
+  labs(
+    title = "Play Type by Down",
+    x = "Down",
+    y = "Number of plays",
+    fill = "Play type"
+  )
+```
+
+Runs are better than passes on 1st down, but passing takes over on 2nd and 3rd down. 
+
+### 2. distribution of yards gained
+
+```{r plot-hist-yards}
+nfl |>
+  filter(play_type != "Sack", between(yards_gained, -10, 40)) |>
+  ggplot(aes(x = yards_gained, fill = play_type)) +
+  geom_histogram(binwidth = 1, alpha = 0.6, position = "identity") +
+  labs(
+    title = "Yards Gained on Passes and Runs",
+    subtitle = "Plays gaining between -10 and 40 yards",
+    x = "Yards gained",
+    y = "Number of plays",
+    fill = "Play type"
+  )
+```
+
+Runs center around 1-5 yards. Passes have a big spike at 0 (incompletions) and a longer right tail.
+
+### 3. EPA by field zone (box plot)
+
+```{r plot-box-epa}
+nfl |>
+  filter(!is.na(epa)) |>
+  ggplot(aes(x = field_zone, y = epa, fill = play_type)) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  coord_cartesian(ylim = c(-4, 4)) +
+  labs(
+    title = "Expected Points Added by Field Position and Play Type",
+    x = "Field zone",
+    y = "EPA",
+    fill = "Play type"
+  )
+```
+
+Sacks are costly everywhere. The spread of EPA widens in the red zone, where a single play can mean a touchdown.
+
+### 4. Air yards vs. EPA on passes (scatter plot)
+
+```{r plot-scatter-air}
+set.seed(558)
+nfl |>
+  filter(play_type == "Pass", !is.na(pass_outcome), !is.na(epa)) |>
+  slice_sample(n = 5000) |>
+  ggplot(aes(x = air_yards, y = epa, color = pass_outcome)) +
+  geom_point(alpha = 0.3) +
+  labs(
+    title = "Air Yards vs. EPA on Pass Attempts",
+    subtitle = "Random sample of 5,000 passes",
+    x = "Air yards (distance the ball traveled past the line of scrimmage)",
+    y = "EPA",
+    color = "Outcome"
+  )
+```
+
+Completions gain more value the farther downfield they are completed. Incompletions 
+sit at a small negative EPA irrespective of distance. The large negative outliers are mostly interceptions.
+
+### 5. pass rate by quarter and game situation
+
+```{r plot-facet-pass-rate}
+nfl |>
+  group_by(quarter, game_situation) |>
+  summarize(pass_rate = mean(play_type != "Run"), .groups = "drop") |>
+  ggplot(aes(x = quarter, y = pass_rate, fill = quarter)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ game_situation) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Pass Rate by Quarter and Score",
+    subtitle = "Sacks count as pass plays",
+    x = "Quarter",
+    y = "Share of plays that are passes"
+  )
+```
+
+Passing rates are similar across scores early on. In the 4th quarter they split.
+Teams that are being outscored pass 77% of the time, while leading teams drop to
+about 38% as to run out the clock.
+
+### 6. pass rate by down and distance
+
+Each tile shows how often teams pass in a given down-and-distance situation.
+
+```{r plot-heatmap-down-dist}
+nfl |>
+  mutate(distance = cut(ydstogo,
+                        breaks = c(0, 2, 5, 9, 10, 15, Inf),
+                        labels = c("1-2", "3-5", "6-9", "10", "11-15", "16+"))) |>
+  group_by(down, distance) |>
+  summarize(pass_rate = mean(play_type != "Run"), n = n(), .groups = "drop") |>
+  ggplot(aes(x = distance, y = down, fill = pass_rate)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = scales::percent(pass_rate, accuracy = 1)), size = 3.5) +
+  scale_fill_gradient(low = "#f7fbff", high = "#08519c",
+                      labels = scales::percent) +
+  scale_y_discrete(limits = rev) +
+  labs(
+    title = "How Often Teams Pass, by Down and Distance",
+    x = "Yards to go",
+    y = "Down",
+    fill = "Pass rate"
+  )
+```
+
+Short yardage leans toward runs on every down. On 3rd and 4th down with 3+ yards to go, teams pass 80-90% of the time.
+
+### 7. EPA by pass length and location (heatmap)
+
+```{r plot-heatmap-pass-epa}
+nfl |>
+  filter(play_type == "Pass", !is.na(pass_length), !is.na(pass_location)) |>
+  group_by(pass_length, pass_location) |>
+  summarize(mean_epa = mean(epa, na.rm = TRUE), n = n(), .groups = "drop") |>
+  ggplot(aes(x = pass_location, y = pass_length, fill = mean_epa)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_epa, 2)), size = 4) +
+  scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                       midpoint = 0) +
+  labs(
+    title = "Average EPA by Pass Length and Location",
+    x = "Pass location",
+    y = "Pass length",
+    fill = "Mean EPA"
+  )
+```
+
+Deep passes over the middle return the most value on average, despite being thrown the least.
