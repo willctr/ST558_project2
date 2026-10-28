@@ -89,8 +89,41 @@ ui <- fluidPage(
       tabsetPanel(
         id = "tabs",
         selected = "About",
-        tabPanel("About",
-                 p("About tab.")),
+        # about tab
+        tabPanel(
+          "About",
+          h3("About this app"),
+          p("This app lets you explore every pass, run, and sack from the",
+            "2009-2016 NFL seasons. You can subset the",
+            "data to the scenarios of interest, download it, and build",
+            "your own tables and plots."),
+          
+          h4("The data"),
+          p("The data was scraped from the NFL's play-by-play feed with the",
+            tags$code("nflscrapR"), "package. Each row is one play, with the",
+            "game situation (down, distance, field position, score, time),",
+            "what happened (play type, yards gained, pass details), and",
+            "advanced metrics like expected points added (EPA) and win probability.",
+            "More information: ",
+            a("Kaggle", href = "https://www.kaggle.com/datasets/maxhorowitz/nflplaybyplay2009to2016",
+              target = "_blank"), "."),
+          
+          h4("How to use the app"),
+          tags$ul(
+            tags$li(strong("Sidebar:"), "choose play types, a down, and a conference,",
+                    "and optionally pick up to two numeric variables to filter by range.",
+                    "Click", strong("Apply filters"), "to update the data. Nothing",
+                    "changes until you click Apply filters."),
+            tags$li(strong("Data download:"), "view the filtered data in a table and",
+                    "save it as a csv file."),
+            tags$li(strong("Data exploration:"), "build contingency tables, numeric",
+                    "summaries, and plots of the filtered data, choosing which",
+                    "variables to summarize, color, and facet by.")
+          ),
+          
+          img(src = "nfl_logo.png", width = "100%",
+              style = "max-width: 600px; margin-top: 10px;")
+        ),
         tabPanel("Data Download",
                  textOutput("n_rows")),
         tabPanel("Data Exploration",
