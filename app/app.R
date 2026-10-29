@@ -3,6 +3,7 @@
 # shiny app for subsetting, summarizing, and plotting NFL play-by-play data.
 
 library(shiny)
+library(shinycssloaders)
 library(dplyr)
 library(ggplot2)
 
@@ -169,7 +170,7 @@ ui <- fluidPage(
           br(),
           downloadButton("download_data", "Download filtered data (CSV)"),
           br(), br(),
-          DT::dataTableOutput("data_table")
+          withSpinner(DT::dataTableOutput("data_table"))
         ),
         
         # data exploration tab
@@ -207,7 +208,7 @@ ui <- fluidPage(
             h4("Contingency table"),
             tableOutput("cat_table"),
             h4("Bar chart"),
-            plotOutput("cat_plot", height = "450px")
+            withSpinner(plotOutput("cat_plot", height = "450px"))
           ),
           
           # numeric summaries
@@ -248,7 +249,7 @@ ui <- fluidPage(
               helpText("Each tile shows the mean of the numeric variable.",
                        "The group variable sets the columns.")
             ),
-            plotOutput("num_plot", height = "450px")
+            withSpinner(plotOutput("num_plot", height = "450px"))
           )
         )
       )
