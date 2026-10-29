@@ -21,6 +21,13 @@ numeric_vars <- c(
   "Win probability" = "win_prob"
 )
 
+# numeric variables for the exploration tab
+explore_num_vars <- c(
+  numeric_vars,
+  "Yards after catch (passes only)" = "yac",
+  "Win probability added (WPA)" = "wpa"
+)
+
 #  build a range slider for a numeric variable
 make_range_slider <- function(id, var) {
   rng <- range(nfl[[var]], na.rm = TRUE)
@@ -56,7 +63,7 @@ facet_vars <- cat_vars[cat_vars != "posteam"]
 
 # readable label for any variable name
 var_label <- function(var) {
-  all_vars <- c(numeric_vars, cat_vars)
+  all_vars <- c(explore_num_vars, cat_vars)
   names(all_vars)[all_vars == var][1]
 }
 
@@ -206,7 +213,42 @@ ui <- fluidPage(
           # numeric summaries
           conditionalPanel(
             condition = "input.summary_type == 'Numeric'",
-            p("Numeric summaries - coming soon.")
+            fluidRow(
+              column(4, selectInput("num_var", "Numeric variable",
+                                    choices = explore_num_vars,
+                                    selected = "yards_gained")),
+              column(4, selectInput("num_group", "Group / color by",
+                                    choices = c("None" = "none", cat_vars),
+                                    selected = "play_type")),
+              column(4, selectInput("num_facet", "Facet by (optional)",
+                                    choices = c("None" = "none", facet_vars),
+                                    selected = "none"))
+            ),
+            h4("Summary statistics"),
+            tableOutput("num_table"),
+            h4("Plot"),
+            radioButtons(
+              "plot_type", "Plot type",
+              choices = c("Histogram", "Density", "Box plot",
+                          "Scatter plot", "Heatmap"),
+              selected = "Histogram",
+              inline = TRUE
+            ),
+            # extra inputs only needed by some plot types
+            conditionalPanel(
+              condition = "input.plot_type == 'Scatter plot'",
+              selectInput("num_var_y", "Y-axis variable",
+                          choices = explore_num_vars, selected = "epa"),
+              helpText("Scatter plots show a random sample of up to 5,000 plays.")
+            ),
+            conditionalPanel(
+              condition = "input.plot_type == 'Heatmap'",
+              selectInput("heat_var", "Second categorical variable (heatmap rows)",
+                          choices = facet_vars, selected = "down"),
+              helpText("Each tile shows the mean of the numeric variable.",
+                       "The group variable sets the columns.")
+            ),
+            plotOutput("num_plot", height = "450px")
           )
         )
       )
@@ -338,6 +380,140 @@ server <- function(input, output, session) {
     if (input$cat_facet != "none") {
       p <- p + facet_wrap(vars(.data[[input$cat_facet]])) +
         labs(subtitle = paste("Faceted by", var_label(input$cat_facet)))
+    }
+    
+    p + theme_minimal(base_size = 14) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+  
+  # data exploration tab
+  num_data <- reactive({
+    vars <- c(input$num_var, input$num_group, input$num_facet)
+    if (input$plot_type == "Scatter plot") vars <- c(vars, input$num_var_y)
+    if (input$plot_type == "Heatmap") vars <- c(vars, input$heat_var)
+    vars <- unique(vars[vars != "none"])
+    subset_data() |>
+      filter(if_all(all_of(vars), ~ !is.na(.x))) |>
+      droplevels()
+  })
+  
+  output$num_table <- renderTable({
+    validate(need(nrow(num_data()) > 0,
+                  "No plays match these filters. Try changing the sidebar or variables."))
+    df <- num_data()
+    if (input$num_group != "none") {
+      df <- group_by(df, .data[[input$num_group]])
+    }
+    stats <- df |>
+      summarize(
+        n = n(),
+        Mean = mean(.data[[input$num_var]]),
+        Median = median(.data[[input$num_var]]),
+        SD = sd(.data[[input$num_var]]),
+        Min = min(.data[[input$num_var]]),
+        Max = max(.data[[input$num_var]]),
+        .groups = "drop"
+      ) |>
+      mutate(n = as.integer(n))
+    
+    # use the readable label for the group column
+    if (input$num_group != "none") {
+      names(stats)[1] <- var_label(input$num_group)
+    }
+    stats
+  }, digits = 2)
+  
+  output$num_plot <- renderPlot({
+    group <- input$num_group
+    x_lab <- var_label(input$num_var)
+    validate(
+      need(nrow(num_data()) > 0,
+           "No plays match these filters. Try changing the sidebar or variables."),
+      need(input$num_facet == "none" || input$num_facet != group,
+           "The facet variable must be different from the group variable."),
+      need(input$plot_type != "Scatter plot" || input$num_var != input$num_var_y,
+           "Choose two different numeric variables for the scatter plot."),
+      need(input$plot_type != "Heatmap" || group != "none",
+           "The heatmap needs a group variable for its columns."),
+      need(input$plot_type != "Heatmap" || input$heat_var != group,
+           "Choose two different categorical variables for the heatmap.")
+    )
+    df <- num_data()
+    has_group <- group != "none"
+    
+    # base plot for the chosen plot type; color/fill by the group variable if chosen
+    if (input$plot_type == "Histogram") {
+      p <- if (has_group) {
+        ggplot(df, aes(x = .data[[input$num_var]], fill = .data[[group]])) +
+          geom_histogram(bins = 40, alpha = 0.6, position = "identity")
+      } else {
+        ggplot(df, aes(x = .data[[input$num_var]])) +
+          geom_histogram(bins = 40, fill = "#2c7fb8")
+      }
+      p <- p + labs(title = paste("Distribution of", x_lab), x = x_lab,
+                    y = "Number of plays", fill = var_label(group))
+      
+    } else if (input$plot_type == "Density") {
+      p <- if (has_group) {
+        ggplot(df, aes(x = .data[[input$num_var]], fill = .data[[group]])) +
+          geom_density(alpha = 0.4)
+      } else {
+        ggplot(df, aes(x = .data[[input$num_var]])) +
+          geom_density(fill = "#2c7fb8", alpha = 0.6)
+      }
+      p <- p + labs(title = paste("Density of", x_lab), x = x_lab,
+                    y = "Density", fill = var_label(group))
+      
+    } else if (input$plot_type == "Box plot") {
+      p <- if (has_group) {
+        ggplot(df, aes(x = .data[[group]], y = .data[[input$num_var]],
+                       fill = .data[[group]])) +
+          geom_boxplot(outlier.alpha = 0.1, show.legend = FALSE) +
+          labs(title = paste(x_lab, "by", var_label(group)), x = var_label(group))
+      } else {
+        ggplot(df, aes(x = "", y = .data[[input$num_var]])) +
+          geom_boxplot(fill = "#2c7fb8", outlier.alpha = 0.1) +
+          labs(title = x_lab, x = NULL)
+      }
+      p <- p + labs(y = x_lab)
+      
+    } else if (input$plot_type == "Scatter plot") {
+      # sample so the plot renders quickly
+      set.seed(558)
+      df_plot <- slice_sample(df, n = min(5000, nrow(df)))
+      y_lab <- var_label(input$num_var_y)
+      p <- if (has_group) {
+        ggplot(df_plot, aes(x = .data[[input$num_var]], y = .data[[input$num_var_y]],
+                            color = .data[[group]])) +
+          geom_point(alpha = 0.4)
+      } else {
+        ggplot(df_plot, aes(x = .data[[input$num_var]], y = .data[[input$num_var_y]])) +
+          geom_point(alpha = 0.4, color = "#2c7fb8")
+      }
+      p <- p + labs(title = paste(y_lab, "vs.", x_lab),
+                    subtitle = paste("Random sample of", nrow(df_plot), "plays"),
+                    x = x_lab, y = y_lab, color = var_label(group))
+      
+    } else {
+      # heatmap: mean of the numeric variable for each pair of categories
+      facet_cols <- if (input$num_facet != "none") input$num_facet else character(0)
+      p <- df |>
+        group_by(across(all_of(c(group, input$heat_var, facet_cols)))) |>
+        summarize(mean_value = mean(.data[[input$num_var]]), .groups = "drop") |>
+        ggplot(aes(x = .data[[group]], y = .data[[input$heat_var]], fill = mean_value)) +
+        geom_tile(color = "white") +
+        geom_text(aes(label = round(mean_value, 2)), size = 3.5) +
+        scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                             midpoint = mean(df[[input$num_var]])) +
+        labs(title = paste("Mean", x_lab, "by", var_label(group), "and",
+                           var_label(input$heat_var)),
+             x = var_label(group), y = var_label(input$heat_var),
+             fill = paste("Mean", x_lab))
+    }
+    
+    if (input$num_facet != "none") {
+      p <- p + facet_wrap(vars(.data[[input$num_facet]])) +
+        labs(caption = paste("Faceted by", var_label(input$num_facet)))
     }
     
     p + theme_minimal(base_size = 14) +
